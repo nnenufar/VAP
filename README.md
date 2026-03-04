@@ -4,9 +4,9 @@ Voice Activity Projection is a Self-supervised objective for Turn-taking Events.
 
 ## Installation
 * Create conda env: `conda create -n vap python=3.10`
-  - source env: `conda source vap`
+  - source env: `conda activate vap`
   - Working with `python 3.10` but I don't think it matters too much...
-* PyTorch: `conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia`
+* PyTorch: `conda install -y --override-channels --strict-channel-priority -c pytorch -c nvidia -c conda-forge pytorch torchvision torchaudio pytorch-cuda=11.8`
     - Have not tested all versions but should work from `torch 2.0.1` as of time of writing...
 * Install **`VAP`** (this repo):
   * cd to root directory and run:
