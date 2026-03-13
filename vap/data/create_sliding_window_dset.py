@@ -10,7 +10,7 @@ VAD_LIST = list[list[list[float]]]
 
 
 def get_vad_list_lims(vad_list: VAD_LIST) -> tuple[float, float]:
-    start = max(vad_list[0][0][0], vad_list[1][0][0])
+    start = min(vad_list[0][0][0], vad_list[1][0][0])
     end = max(vad_list[0][-1][-1], vad_list[1][-1][-1])
     return start, end
 
