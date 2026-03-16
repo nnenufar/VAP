@@ -4,7 +4,7 @@ import torch
 import pandas as pd
 import tqdm
 
-from vap.utils.utils import read_json, get_vad_list_subset, invalid_vad_list
+from vap.utils.utils import read_json, get_vad_list_subset, invalid_vad_list, has_empty_channel
 
 VAD_LIST = list[list[list[float]]]
 
@@ -73,7 +73,7 @@ def main(args):
         df.iterrows(), total=len(df), desc="Create sliding window dataset"
     ):
         vad_list = read_json(row.vad_path)
-        if invalid_vad_list(vad_list):
+        if invalid_vad_list(vad_list) or has_empty_channel(vad_list):
             skipped.append(row.vad_path)
             continue
 

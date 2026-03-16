@@ -297,6 +297,17 @@ def invalid_vad_list(vad_list: VAD_LIST) -> bool:
     return False
 
 
+def has_empty_channel(vad_list: VAD_LIST) -> bool:
+    """
+    Checks if any channel in the vad_list is empty.
+    Useful for skipping files where boundary extraction using both channels would fail.
+    """
+    if vad_list is None or len(vad_list) < 2:
+        return True
+    if len(vad_list[0]) == 0 or len(vad_list[1]) == 0:
+        return True
+    return False
+
 ################################################
 # File system
 ################################################
