@@ -4,7 +4,7 @@ import torch
 import pandas as pd
 import tqdm
 
-from vap.utils.utils import read_json, get_vad_list_subset, invalid_vad_list, has_empty_channel
+from vap.utils.utils import read_json, get_vad_list_subset, invalid_vad_list
 
 VAD_LIST = list[list[list[float]]]
 
@@ -12,7 +12,12 @@ VAD_LIST = list[list[list[float]]]
 def get_vad_list_lims(vad_list: VAD_LIST) -> tuple[float, float]:
     start = min(vad_list[0][0][0], vad_list[1][0][0])
     end = max(vad_list[0][-1][-1], vad_list[1][-1][-1])
-    return start, end
+
+    if start >= end:
+        f"Invalid vad_list limits: start {start} >= end {end}"
+        return None
+    else:
+        return start, end
 
 
 def get_sliding_windows(
@@ -22,7 +27,12 @@ def get_sliding_windows(
     Sliding windows of a session
     """
     # Get boundaries from vad
-    start, end = get_vad_list_lims(vad_list)
+    try:
+        start, end = get_vad_list_lims(vad_list)
+    except Exception as e:
+        print("Error getting vad_list limits")
+        print("vad_list: ", vad_list)
+        return None
 
     # Define the step size
     step = window_duration - overlap
@@ -32,7 +42,7 @@ def get_sliding_windows(
 
     # Get the starting times for each window
     starts = torch.arange(start, end, step)[:n_windows].tolist()
-    # starts = [start + i * step for i in range(n_windows)]
+    
 
     return starts
 
@@ -49,20 +59,25 @@ def sliding_window(
     """
 
     starts = get_sliding_windows(vad_list, duration, overlap)
-    samples = []
-    for start in starts:
-        end = start + duration
-        vad_list_subset = get_vad_list_subset(vad_list, start, end + horizon)
-        samples.append(
-            {
-                "session": Path(audio_path).stem,
-                "audio_path": audio_path,
-                "start": start,
-                "end": end,
-                "vad_list": vad_list_subset,
-            }
-        )
-    return samples
+
+    if starts is not None:
+        samples = []
+        for start in starts:
+            end = start + duration
+            vad_list_subset = get_vad_list_subset(vad_list, start, end + horizon)
+            samples.append(
+                {
+                    "session": Path(audio_path).stem,
+                    "audio_path": audio_path,
+                    "start": start,
+                    "end": end,
+                    "vad_list": vad_list_subset,
+                }
+            )
+        return samples
+    
+    else:
+        return []
 
 
 def main(args):
@@ -73,7 +88,7 @@ def main(args):
         df.iterrows(), total=len(df), desc="Create sliding window dataset"
     ):
         vad_list = read_json(row.vad_path)
-        if invalid_vad_list(vad_list) or has_empty_channel(vad_list):
+        if invalid_vad_list(vad_list):
             skipped.append(row.vad_path)
             continue
 
@@ -88,9 +103,9 @@ def main(args):
 
     if len(skipped) > 0:
         print("Skipped: ", len(skipped))
-        with open("/tmp/sliding_window_skipped_vad.txt", "w") as f:
+        with open("data/sliding_window_skipped_vad.txt", "w") as f:
             f.write("\n".join(skipped))
-        print("See -> /tmp/sliding_window_skipped_vad.txt")
+        print("See -> data/sliding_window_skipped_vad.txt")
         print()
 
     print(f"Extracted {len(data)} segments from {len(df)} session.")
