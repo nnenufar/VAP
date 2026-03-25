@@ -30,7 +30,7 @@ def main(cfg: DictConfig) -> None:
             metric = instantiate(cfg.module.val_metric)
             module.val_metric = metric
             print("Added val metrics")
-        input("Press enter to continue: ")
+        #input("Press enter to continue: ")
 
     if getattr(cfg, "debug", False):
         trainer = Trainer(fast_dev_run=True)

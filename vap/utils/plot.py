@@ -49,7 +49,13 @@ def plot_melspectrogram(
     )
     ax[0].set_yticks([])
     ax[0].set_yticks([])
-    ax[0].set_ylabel("A", fontsize=fontsize)
+    ax[0].set_ylabel("A",
+                     fontsize=fontsize,
+                     rotation=0,
+                     labelpad=10,          
+                     va='center',          
+                     ha='right',           
+                     bbox=dict(facecolor='lightblue', edgecolor='none', pad=3))
 
     if mel_spec.shape[0] > 1 and len(ax) > 1:
         ax[1].imshow(
@@ -61,7 +67,13 @@ def plot_melspectrogram(
         )
         ax[1].set_yticks([])
         ax[1].set_yticks([])
-        ax[1].set_ylabel("B", fontsize=fontsize)
+        ax[1].set_ylabel("B",
+                         rotation=0,
+                         labelpad=10,          
+                         va='center',          
+                         ha='right',    
+                         fontsize=fontsize,
+                         bbox=dict(facecolor='orange',edgecolor='none', pad=3))
     if plot:
         plt.pause(0.01)
     if return_spec:
@@ -102,7 +114,7 @@ def plot_vap_probs(
     label: List[str] = ["A", "B"],
     prob_label: str = "P now",
     yticks: list[str] = ["B", "A"],
-    alpha_ns: float = 0.6,
+    alpha_ns: float = 0.5,
     fontsize: int = 12,
     no_xticks: bool = True,
     legend: bool = True,
@@ -118,7 +130,6 @@ def plot_vap_probs(
         where=p > 0.5,
         alpha=alpha_ns,
         color=color[0],
-        label=label[0],
     )
     ax.fill_between(
         x,
@@ -126,17 +137,20 @@ def plot_vap_probs(
         y2=0.5,
         where=p < 0.5,
         alpha=alpha_ns,
-        color=color[1],
-        label=label[1],
+        color=color[1]
     )
-    ax.plot(x, p, color="k", linewidth=1, label=prob_label, zorder=4)
-    ax.set_yticks([0.25, 0.75], yticks, fontsize=fontsize)
+    ax.plot(x, p, color="k", linewidth=2, label=prob_label, zorder=4)
+    ax.set_yticks([0.5])
     ax.set_ylim([0, 1])
     ax.set_xlim([0, x[-1]])
 
     if legend:
-        ax.legend(loc="lower left")
-    ax.axhline(y=0.5, linestyle="dashed", linewidth=2, color="k")
+        ax.legend(loc="upper left",
+                  fontsize=10,
+                  borderpad=0.1,
+                  bbox_to_anchor=(0, 1),
+                  borderaxespad=0)
+    ax.axhline(y=0.5, linestyle="dashed", linewidth=1.5, color="magenta")
 
     if no_xticks:
         ax.set_xticks([])

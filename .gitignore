@@ -150,3 +150,8 @@ dmypy.json
 # IDE Settings
 .vscode
 
+tests/data
+tests/checkpoints
+tests/eval
+slurm/out
+example

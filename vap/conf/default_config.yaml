@@ -1,15 +1,15 @@
 # https://github.com/facebookresearch/recipes/blob/main/torchrecipes/audio/source_separation/conf/default_config.yaml
 datamodule:
   _target_: vap.data.datamodule.VAPDataModule
-  train_path: "example/data/sliding_dev.csv"
-  val_path: "example/data/sliding_dev.csv"
-  test_path: "example/data/sliding_dev.csv"
+  train_path: "example/data/sliding_dev.csv" # Overwritten when calling the script
+  val_path: "example/data/sliding_dev.csv"  # Overwritten when calling the script
+  test_path: "example/data/sliding_dev.csv" # # Overwritten when calling the script
   horizon: 2
   sample_rate: 16000
   frame_hz: 50
   mono: false
-  batch_size: 4
-  num_workers: 4
+  batch_size: 64
+  num_workers: 8
   pin_memory: true
   prefetch_factor: 5
 
@@ -82,13 +82,13 @@ trainer:
   gradient_clip_val: 5.0
   logger:
     _target_: lightning.pytorch.loggers.wandb.WandbLogger
-    save_dir: runs_new
+    save_dir: runs
     project: VAP2
     name: VAP2
-    log_model: false
+    log_model: true
   callbacks:
   - _target_: lightning.pytorch.callbacks.ModelCheckpoint
-    # dirpath: /tmp/checkpoints
+    dirpath: runs/checkpoints
     monitor: val_loss
     mode: min
     save_top_k: 1

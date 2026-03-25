@@ -257,18 +257,31 @@ class VAPClassificationDataset(Dataset):
             sample_rate=self.sample_rate,
             mono=self.mono,
         )
+
+        w_ext, _ = load_waveform(
+            d["audio_path"],
+            start_time=start_time,
+            end_time=d["ipu_end"] + self.artificial_silence + d['tfo'],
+            sample_rate=self.sample_rate,
+            mono=self.mono,
+        )
+
         n_channels = w.shape[0]
         if start_time == 0:
             diff = self.context - d["ipu_end"]
             # Add silence to the beginning
             silence_prefix = torch.zeros(n_channels, int(diff * self.sample_rate))
             w = torch.cat((silence_prefix, w), dim=-1)
+            w_ext = torch.cat((silence_prefix, w_ext), dim=-1)
         # Ensure correct duration
         # Some clips (20s) becomes
         # [2, 320002] insted of [2, 320000]
         # breaking the batching
         n_samples = int(self.context * self.sample_rate)
+        n_samples_ext = int((self.context + self.artificial_silence + d['tfo']) * self.sample_rate)
         w = force_correct_nsamples(w, n_samples)
+        w_ext = force_correct_nsamples(w_ext, n_samples_ext)
+        w_ext[:, :n_samples] = 0.0
 
         # Add artificial silence
         silence_suffix = torch.zeros(
@@ -276,8 +289,10 @@ class VAPClassificationDataset(Dataset):
         )
         w = torch.cat((w, silence_suffix), dim=-1)
         return {
-            "session": d.get("session", ""),
+            "session": f"{Path(d['audio_path']).name}",
+            "ipu_end": d["ipu_end"],
             "waveform": w,
+            "waveform_extended": w_ext,
             "label": d["label"],
             "tfo": d["tfo"],
             "speaker": d["speaker"],
