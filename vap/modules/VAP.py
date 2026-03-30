@@ -10,7 +10,7 @@ from vap.utils.utils import (
     vad_fill_silences,
     vad_omit_spikes,
 )
-from vap.modules.modules import ProjectionLayer
+from vap.modules.modules import ProjectionLayer, LabelEmbeddingLookup
 
 everything_deterministic()
 
@@ -22,6 +22,7 @@ class VAP(nn.Module):
         self,
         encoder: nn.Module,
         transformer: nn.Module,
+        relation_conditioner: Optional[nn.Module] = None,
         bin_times: list[float] = [0.2, 0.4, 0.6, 0.8],
         frame_hz: int = 50,
     ):
@@ -33,9 +34,16 @@ class VAP(nn.Module):
         self.dim: int = getattr(self.transformer, "dim", 256)
 
         self.feature_projection = nn.Identity()
-        if self.encoder.dim != self.transformer.dim:
+
+        if relation_conditioner is not None:
+            self.relation_conditioner = relation_conditioner
+            inp_dim = self.encoder.dim + self.relation_conditioner.dim
             self.feature_projection = ProjectionLayer(
-                self.encoder.dim, self.transformer.dim
+                inp_dim, self.transformer.dim
+            )
+        elif self.encoder.dim != self.transformer.dim:
+                self.feature_projection = ProjectionLayer(
+                    self.encoder.dim, self.transformer.dim
             )
 
         # Outputs
@@ -68,6 +76,9 @@ class VAP(nn.Module):
         x1 = self.encoder(audio[:, :1])  # speaker 1
         x2 = self.encoder(audio[:, 1:])  # speaker 2
         return x1, x2
+    
+    def relation_conditioning(self, labels: Tensor) -> Tensor:
+        return self.relation_conditioner(labels.view(-1)).unsqueeze(1)
 
     def head(self, x: Tensor, x1: Tensor, x2: Tensor) -> tuple[Tensor, Tensor]:
         v1 = self.va_classifier(x1)
@@ -76,8 +87,13 @@ class VAP(nn.Module):
         logits = self.vap_head(x)
         return logits, vad
 
-    def forward(self, waveform: Tensor, attention: bool = False) -> OUT:
+    def forward(self, waveform: Tensor, relation_labels: Optional[Tensor] = None, attention: bool = False) -> OUT:
         x1, x2 = self.encode_audio(waveform)
+        if relation_labels is not None and hasattr(self, "relation_conditioner"):
+            rel_emb = self.relation_conditioning(relation_labels)
+            rel_emb = rel_emb.expand(-1, x1.shape[1], -1) 
+            x1 = torch.cat([x1, rel_emb], dim=-1)
+            x2 = torch.cat([x2, rel_emb], dim=-1)
         x1 = self.feature_projection(x1)
         x2 = self.feature_projection(x2)
         out = self.transformer(x1, x2, attention=attention)
@@ -233,13 +249,16 @@ if __name__ == "__main__":
 
     # from vap.modules.encoder_hubert import EncoderHubert
     from vap.modules.modules import TransformerStereo
+    from vap.modules.modules import LabelEmbeddingLookup
 
     encoder = EncoderCPC()
     # encoder = EncoderHubert()
     transformer = TransformerStereo(dim=512)
+    conditioner = LabelEmbeddingLookup()
 
-    model = VAP(encoder, transformer)
+    model = VAP(encoder, transformer, conditioner)
     print(model)
 
     x = torch.randn(1, 2, 32000)
-    out = model(x)
+    lbl = torch.randint(0, 9, (1,1))
+    out = model(waveform=x, relation_labels=lbl)

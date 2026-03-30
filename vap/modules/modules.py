@@ -526,6 +526,23 @@ class ProjectionLayer(nn.Module):
         return self.dropout(x)
 
 
+class LabelEmbeddingLookup(nn.Module):
+    """
+    Simple embedding lookup for discrete labels.
+    Used to condition the model on relationship type.
+    """
+
+    def __init__(self,
+                 n_labels: int = 10,
+                 dim: int = 16):
+        super().__init__()
+        self.n_labels = n_labels
+        self.dim = dim
+        self.embedding = nn.Embedding(n_labels, dim)
+
+    def forward(self, label_ids: Tensor) -> Tensor:
+        return self.embedding(label_ids)
+
 def test_gpt():
     model = GPT(dim=256, dff_k=3, num_layers=4, num_heads=8)
     x = torch.rand((4, 20, model.dim))

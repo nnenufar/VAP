@@ -40,8 +40,16 @@ class VAPModule(L.LightningModule):
         self.test_metric = test_metric
         self.save_hyperparameters()  # ignore=["model"])
 
-    def forward(self, waveform: Tensor) -> dict[str, Tensor]:
-        return self.model(waveform)
+    def forward(self,
+                waveform: Tensor,
+                relation_labels: Optional[Tensor] = None
+               ) -> dict[str, Tensor]:
+        if relation_labels is not None and hasattr(self.model, "relation_conditioner"):
+            print("RUNNING WITH RELATION CONDITIONER")
+            return self.model(waveform, relation_labels)
+        else:
+            print("RELATION CONDITIONER NOT AVAILABLE")
+            return self.model(waveform)
 
     @staticmethod
     def load_model(path: str) -> VAP:
@@ -81,7 +89,10 @@ class VAPModule(L.LightningModule):
             out:        dict, ['logits', 'vad', 'vap_loss', 'vad_loss']
         """
         labels = self.model.extract_labels(batch["vad"])
-        out = self(batch["waveform"])
+        if hasattr(self.model, "relation_conditioner"):
+            out = self(batch["waveform"], batch["relation"])
+        else:
+            out = self(batch["waveform"])
 
         # Hubert Model does not provide exact frames back
         if labels.shape[1] != out["logits"].shape[1]:
@@ -129,12 +140,12 @@ class VAPModule(L.LightningModule):
 if __name__ == "__main__":
 
     from vap.modules.encoder import EncoderCPC
-    from vap.modules.encoder_hubert import EncoderHubert
     from vap.modules.modules import TransformerStereo
+    from vap.modules.modules import LabelEmbeddingLookup
 
-    # encoder = EncoderCPC()
-    encoder = EncoderHubert()
+    encoder = EncoderCPC()
     transformer = TransformerStereo()
-    model = VAP(encoder, transformer)
+    conditioner = LabelEmbeddingLookup()
+    model = VAP(encoder, transformer, conditioner)
     module = VAPModule(model)
     print(module)
