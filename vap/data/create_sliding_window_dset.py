@@ -8,6 +8,52 @@ from vap.utils.utils import read_json, get_vad_list_subset, invalid_vad_list
 
 VAD_LIST = list[list[list[float]]]
 
+def build_session_lookup(agg_csv_path):
+    usecols = [
+        "vendor_id", "session_id", "interaction_id", "relationship_detail", "participant_ids",
+        "participant_1_extraversion_raw", "participant_1_agreeableness_raw", 
+        "participant_1_conscientiousness_raw", "participant_1_neuroticism_raw", 
+        "participant_1_openness_raw",
+        "participant_2_extraversion_raw", "participant_2_agreeableness_raw", 
+        "participant_2_conscientiousness_raw", "participant_2_neuroticism_raw", 
+        "participant_2_openness_raw"
+    ]
+    df = pd.read_csv(
+        agg_csv_path,
+        usecols=usecols,
+        dtype={"vendor_id": str, "session_id": str, "interaction_id": str}
+    )
+    
+    df["full_session_id"] = (
+        "V" + df["vendor_id"].str.zfill(2) + 
+        "_S" + df["session_id"].str.zfill(4) + 
+        "_I" + df["interaction_id"].str.zfill(8)
+    )
+
+    df = df.drop_duplicates(subset="full_session_id")
+    df = df.set_index("full_session_id")
+    
+    return df
+
+def get_session_info(session_lookup_df, session_id):
+    row = session_lookup_df.loc[session_id]
+    personalities = [
+        row["participant_1_extraversion_raw"],
+        row["participant_1_agreeableness_raw"],
+        row["participant_1_conscientiousness_raw"],
+        row["participant_1_neuroticism_raw"],
+        row["participant_1_openness_raw"],
+        row["participant_2_extraversion_raw"],
+        row["participant_2_agreeableness_raw"],
+        row["participant_2_conscientiousness_raw"],
+        row["participant_2_neuroticism_raw"],
+        row["participant_2_openness_raw"]
+    ]
+    return {
+        "relationship": row["relationship_detail"],
+        "participant_ids": row["participant_ids"],
+        "personalities": personalities
+    }
 
 def get_vad_list_lims(vad_list: VAD_LIST) -> tuple[float, float]:
     start = min(vad_list[0][0][0], vad_list[1][0][0])
@@ -50,6 +96,7 @@ def get_sliding_windows(
 def sliding_window(
     vad_list: VAD_LIST,
     audio_path: str,
+    agg_df: pd.DataFrame,
     duration: float = 20,
     overlap: float = 5,
     horizon: float = 2,
@@ -62,12 +109,21 @@ def sliding_window(
 
     if starts is not None:
         samples = []
+        session_id = Path(audio_path).stem
+        session_info = get_session_info(agg_df, session_id)
+        relation = session_info['relationship']
+        participant_ids = session_info['participant_ids']
+        personalities = session_info['personalities']
+        
         for start in starts:
             end = start + duration
             vad_list_subset = get_vad_list_subset(vad_list, start, end + horizon)
             samples.append(
                 {
-                    "session": Path(audio_path).stem,
+                    "session": session_id,
+                    "relation": relation,
+                    "participant_ids": participant_ids,
+                    "personalities": personalities,
                     "audio_path": audio_path,
                     "start": start,
                     "end": end,
@@ -82,6 +138,7 @@ def sliding_window(
 
 def main(args):
     df = pd.read_csv(args.audio_vad_csv)
+    agg_df = build_session_lookup(args.agg_csv)
     data = []
     skipped = []
     for _, row in tqdm.tqdm(
@@ -95,6 +152,7 @@ def main(args):
         session_samples = sliding_window(
             vad_list=vad_list,
             audio_path=row.audio_path,
+            agg_df=agg_df,
             duration=args.duration,
             overlap=args.overlap,
             horizon=args.horizon,
@@ -109,9 +167,17 @@ def main(args):
         print()
 
     print(f"Extracted {len(data)} segments from {len(df)} session.")
+    
+    out_df = pd.DataFrame(data).replace("", pd.NA)
+    
+    # Filter out empty relationships
+    out_df = out_df[out_df["relation"].notna()]
+
+    out_df["relation"] = out_df["relation"].replace({"dating/spouse/romantic_partner": "romantic"})
+    
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(data).to_csv(args.output, index=False)
-    print(f"Saved to {args.output}")
+    out_df.to_csv(args.output, index=False)
+    print(f"Saved {len(out_df)} segments to {args.output}")
 
 
 if __name__ == "__main__":
@@ -120,6 +186,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--audio_vad_csv", type=str, default="data/audio_vad.csv")
+    parser.add_argument("--agg_csv", type=str, default="data/interaction_aggregated.csv")
     parser.add_argument("--output", type=str, default="data/sliding_window_dset.csv")
     parser.add_argument("--duration", type=float, default=20)
     parser.add_argument("--overlap", type=float, default=5)

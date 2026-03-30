@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 from vap.utils.audio import load_waveform, mono_to_stereo
-from vap.utils.utils import vad_list_to_onehot
+from vap.utils.utils import vad_list_to_onehot, encode_label
 from vap.utils.plot import plot_melspectrogram, plot_vad
 
 
@@ -84,6 +84,7 @@ class VAPDataset(Dataset):
         sample_rate: int = 16_000,
         frame_hz: int = 50,
         mono: bool = False,
+        mapping_path: str = "data/label_mapping.json",
     ) -> None:
         self.path = path
         self.df = load_df(path)
@@ -95,6 +96,9 @@ class VAPDataset(Dataset):
 
         self.duration = duration
         self.n_samples = int(self.duration * self.sample_rate)
+
+        # Mapping file path for labels
+        self.mapping_path = mapping_path
 
     def __len__(self) -> int:
         return len(self.df)
@@ -132,8 +136,17 @@ class VAPDataset(Dataset):
             d["vad_list"], duration=dur + self.horizon, frame_hz=self.frame_hz
         )
 
+        # Conditioning labels
+        rel = encode_label(d["relation"], self.mapping_path)
+        
+        # Add personalities
+        # Default to zeros if it fails to ensure backwards compatibility with generic Dset
+        #personalities = d.get("personalities", torch.zeros(10))
+
         return {
             "session": d.get("session", ""),
+            "relation": rel,
+            # "personalities": personalities,
             "waveform": w,
             "vad": vad,
             "dataset": d.get("dataset", ""),
@@ -242,11 +255,13 @@ class VAPDataModule(L.LightningDataModule):
 
         for b in batch:
             batch_stacked["session"].append(b["session"])
+            batch_stacked["relation"].append(b["relation"])
             batch_stacked["dataset"].append(b["dataset"])
             batch_stacked["waveform"].append(b["waveform"])
             batch_stacked["vad"].append(b["vad"])
 
         batch_stacked["waveform"] = torch.stack(batch_stacked["waveform"])
+        batch_stacked["relation"] = torch.stack(batch_stacked["relation"])
         batch_stacked["vad"] = torch.stack(batch_stacked["vad"])
         return batch_stacked
 
@@ -322,6 +337,7 @@ if __name__ == "__main__":
         print("VAPDataModule: ", len(dm.test_dset))
         dloader = dm.test_dataloader()
         batch = next(iter(dloader))
+        print("Example batch: ", batch)
         for batch in tqdm(
             dloader,
             total=len(dloader),

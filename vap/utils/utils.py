@@ -336,3 +336,45 @@ def read_txt(path, encoding="utf-8"):
         for line in f.readlines():
             data.append(line.strip())
     return data
+
+################################################
+# Conditioning labels
+################################################
+
+import os
+
+_LABEL_CACHE = {}
+
+def encode_label(label, mapping_path):
+    """
+    Encodes a string label into a tensor and creates (or updates) a persistent mapping.
+
+    Args:
+        label (str): condition label in string format
+        mapping_path (str): Path to JSON file storing label to id mapping
+
+    Returns:
+        torch.Tensor: Scalar tensor containing the encoded label
+    """
+    global _LABEL_CACHE
+    
+    # Load cache if not present in memory
+    if mapping_path not in _LABEL_CACHE:
+        if os.path.exists(mapping_path):
+            with open(mapping_path, "r") as f:
+                _LABEL_CACHE[mapping_path] = json.load(f)
+        else:
+            _LABEL_CACHE[mapping_path] = {}
+            
+    label_to_id = _LABEL_CACHE[mapping_path]
+
+    # Add label if not present
+    if label not in label_to_id:
+        label_to_id[label] = len(label_to_id)
+
+        # Save updated mapping immediately
+        with open(mapping_path, "w") as f:
+            json.dump(label_to_id, f, indent=2)
+
+    # Return encoded label as tensor
+    return torch.tensor(label_to_id[label], dtype=torch.long)
