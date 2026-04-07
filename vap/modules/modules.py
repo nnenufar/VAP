@@ -387,7 +387,7 @@ class GPTStereo(GPT):
         self.combinator = Combinator(dim=self.dim, activation="GELU")
 
     def forward(
-        self, x1: torch.Tensor, x2: torch.Tensor, attention: bool = False
+        self, x1: torch.Tensor, x2: torch.Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None
     ) -> Dict[str, torch.Tensor]:
 
         self_attn_a = []
@@ -404,6 +404,11 @@ class GPTStereo(GPT):
                 cross_attn_b.append(attn_list[3])
 
         x = self.combinator(x1, x2)
+        if rel_emb is not None:
+            x = torch.cat([x, rel_emb], dim=-1)
+            x1 = torch.cat([x1, rel_emb], dim=-1)
+            x2 = torch.cat([x2, rel_emb], dim=-1)
+
         ret = {"x": x, "x1": x1, "x2": x2}
 
         if attention:
@@ -495,11 +500,15 @@ class TransformerStereo(nn.Module):
         )
 
     def forward(
-        self, x1: Tensor, x2: Tensor, attention: bool = False
+        self, x1: Tensor, x2: Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None
     ) -> Mapping[str, Tensor]:
         o1 = self.ar_channel(x1, attention=attention)  # ["x"]
         o2 = self.ar_channel(x2, attention=attention)  # ["x"]
-        out = self.ar(o1["x"], o2["x"], attention=attention)
+
+        if rel_emb is not None:
+            out = self.ar(o1["x"], o2["x"], attention=attention, rel_emb=rel_emb)
+        else:
+            out = self.ar(o1["x"], o2["x"], attention=attention)
 
         if attention:
             out["cross_self_attn"] = out["self_attn"]
@@ -533,7 +542,7 @@ class LabelEmbeddingLookup(nn.Module):
     """
 
     def __init__(self,
-                 n_labels: int = 10,
+                 n_labels: int = 11,
                  dim: int = 16):
         super().__init__()
         self.n_labels = n_labels

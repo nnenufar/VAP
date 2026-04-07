@@ -34,11 +34,16 @@ def extract_preds_and_targets(
     model = model.eval()
     data = {
         k: []
-        for k in ["p1", "p2", "p3", "p4", "p_now", "p_fut", "tfo", "label", "target"]
+        for k in ["p1", "p2", "p3", "p4", "p_now", "p_fut", "tfo", "label", "target", "relation"]
     }
     for batch in tqdm.tqdm(dloader, desc="Event classification"):
         # Model prediction
-        out = model.probs(batch["waveform"].to(model.device))
+        relation_labels = batch["relation"].to(model.device) if "relation" in batch else None
+        relation_list = batch["relation"].tolist() if relation_labels is not None else [None] * len(batch["label"])
+        waveform = batch["waveform"].to(model.device)
+
+        out = model.probs(waveform, relation_labels=relation_labels)
+        
         batch_preds = model.get_shift_probability(
             out, region_start_time, region_end_time, speaker=batch["speaker"]
         )
@@ -48,6 +53,7 @@ def extract_preds_and_targets(
         data["tfo"].extend(batch["tfo"].tolist())
         data["label"].extend(batch["label"])
         data["target"].extend(batch_targets)
+        data["relation"].extend(relation_list)
     return pd.DataFrame(data)
 
 
@@ -157,6 +163,16 @@ def plot_accuracy_now_vs_fut(af, N=None, figsize=(8, 6)):
             label="F1w (fut)",
             linestyle=":",
         )
+    if "f1m_p_now" in af.columns:
+        ax.plot(af["threshold"], af["f1m_p_now"], color="purple", label="F1m (now)")
+    if "f1m_p_fut" in af.columns:
+        ax.plot(
+            af["threshold"],
+            af["f1m_p_fut"],
+            color="indigo",
+            label="F1m (fut)",
+            linestyle=":",
+        )
     ax.axhline(0.5, color="k", linestyle="--")
     ax.legend()
     ax.set_ylim([0, 1])
@@ -189,6 +205,13 @@ def calculate_accuracy(df):
                 num_classes=2,
                 average="weighted",
             ).item()
+            row[f"f1m_{name}"] = f1_score(
+                p_guess,
+                targets,
+                task="multiclass",
+                num_classes=2,
+                average="macro",
+            ).item()
         data.append(row)
     return pd.DataFrame(data)
 
@@ -198,6 +221,31 @@ def simple_label_stats(df: pd.DataFrame):
     n_shift = len(df[df["target"] == 1])
     n_hold = len(df[df["target"] == 0])
     return {"total": n, "shift": n_shift / n, "hold": n_hold / n}
+
+
+def collate_fn(batch):
+    batch_stacked = {k: [] for k in batch[0].keys()}
+
+    for b in batch:
+        for k in batch_stacked:
+            batch_stacked[k].append(b[k])
+
+    if "waveform" in batch_stacked:
+        batch_stacked["waveform"] = torch.stack(batch_stacked["waveform"])
+    if "waveform_extended" in batch_stacked:
+        batch_stacked["waveform_extended"] = torch.stack(
+            batch_stacked["waveform_extended"]
+        )
+    if "relation" in batch_stacked and batch_stacked["relation"][0] is not None:
+        batch_stacked["relation"] = torch.stack(batch_stacked["relation"])
+    if "tfo" in batch_stacked:
+        batch_stacked["tfo"] = torch.tensor(batch_stacked["tfo"])
+    if "speaker" in batch_stacked:
+        batch_stacked["speaker"] = torch.tensor(batch_stacked["speaker"])
+    if "ipu_end" in batch_stacked:
+        batch_stacked["ipu_end"] = torch.tensor(batch_stacked["ipu_end"])
+
+    return batch_stacked
 
 
 def evaluation(args):
@@ -220,6 +268,7 @@ def evaluation(args):
         prefetch_factor=args.prefetch_factor,
         shuffle=False,
         pin_memory=True,
+        collate_fn=collate_fn,
     )
 
     # Extract all prediction and calculate accuracy

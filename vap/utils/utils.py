@@ -345,7 +345,8 @@ import os
 
 _LABEL_CACHE = {}
 
-def encode_label(label, mapping_path):
+def encode_label(label,
+                 mapping_path = "data/label_mapping.json"):
     """
     Encodes a string label into a tensor and creates (or updates) a persistent mapping.
 

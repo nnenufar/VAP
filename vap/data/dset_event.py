@@ -8,7 +8,8 @@ import tqdm
 
 from vap.data.datamodule import force_correct_nsamples
 from vap.utils.audio import load_waveform
-from vap.utils.utils import vad_list_to_onehot, read_json, invalid_vad_list
+from vap.utils.data import build_session_lookup, get_session_info
+from vap.utils.utils import vad_list_to_onehot, read_json, invalid_vad_list, encode_label
 from vap.events.events import HoldShift
 
 VAD_LIST = list[list[list[float]]]
@@ -160,6 +161,7 @@ def extract_ipu_classification(
 def create_classification_dset(
     audio_vad_path: str,
     output: str,
+    agg_df: pd.DataFrame | None = None,
     pre_cond_time: float = 1.0,  # single speaker prior to silence
     post_cond_time: float = 2.0,  # single speaker post silence
     min_silence_time: float = 0.1,  # minimum reaction time / silence duration
@@ -200,6 +202,12 @@ def create_classification_dset(
             c = extract_shift_holds(vad_list, eventer)
         c["audio_path"] = row.audio_path
         c["vad_path"] = row.vad_path
+        if agg_df is not None:
+            session_id = Path(row.audio_path).stem
+            session_info = get_session_info(agg_df, session_id)
+            c["relation"] = session_info["relationship"]
+            #c["participant_ids"] = session_info["participant_ids"]
+            #c["personalities"] = session_info["personalities"]
         all_dfs.append(c)
     c = pd.concat(all_dfs, ignore_index=True)
 
@@ -209,6 +217,13 @@ def create_classification_dset(
             f.write("\n".join(skipped))
         print("See -> /tmp/dset_event_skipped_vad.txt")
         print()
+
+    if agg_df is not None:
+        # Filter out empty relationships
+        c = c[c["relation"].notna()]
+        c["relation"] = c["relation"].replace(
+            {"dating/spouse/romantic_partner": "romantic"}
+        )
 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     c.to_csv(output, index=False)
@@ -261,7 +276,7 @@ class VAPClassificationDataset(Dataset):
         w_ext, _ = load_waveform(
             d["audio_path"],
             start_time=start_time,
-            end_time=d["ipu_end"] + self.artificial_silence + d['tfo'],
+            end_time=d["ipu_end"] + self.artificial_silence,
             sample_rate=self.sample_rate,
             mono=self.mono,
         )
@@ -278,7 +293,7 @@ class VAPClassificationDataset(Dataset):
         # [2, 320002] insted of [2, 320000]
         # breaking the batching
         n_samples = int(self.context * self.sample_rate)
-        n_samples_ext = int((self.context + self.artificial_silence + d['tfo']) * self.sample_rate)
+        n_samples_ext = int((self.context + self.artificial_silence) * self.sample_rate)
         w = force_correct_nsamples(w, n_samples)
         w_ext = force_correct_nsamples(w_ext, n_samples_ext)
         w_ext[:, :n_samples] = 0.0
@@ -288,6 +303,9 @@ class VAPClassificationDataset(Dataset):
             (n_channels, int(self.artificial_silence * self.sample_rate))
         )
         w = torch.cat((w, silence_suffix), dim=-1)
+
+        rel = encode_label(d["relation"], mapping_path=Path(__file__).parent.parent.parent / "data" / "label_mapping.json") if "relation" in d else None
+
         return {
             "session": f"{Path(d['audio_path']).name}",
             "ipu_end": d["ipu_end"],
@@ -297,6 +315,7 @@ class VAPClassificationDataset(Dataset):
             "tfo": d["tfo"],
             "speaker": d["speaker"],
             "dataset": d.get("dataset", ""),
+            "relation": rel,
         }
 
 
@@ -305,6 +324,7 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument("--audio_vad_csv", type=str)
+    parser.add_argument("--agg_csv", type=str, default="data/aggregated_sessions.csv")
     parser.add_argument(
         "--output", type=str, default="data/classification/audio_vad_hs.csv"
     )
@@ -317,9 +337,14 @@ if __name__ == "__main__":
     for k, v in vars(args).items():
         print(f"{k}: {v}")
 
+    agg_df = None
+    if args.agg_csv:
+        agg_df = build_session_lookup(args.agg_csv)
+
     create_classification_dset(
         audio_vad_path=args.audio_vad_csv,  # "example/data/audio_vad_example.json",
         output=args.output,  # "example/classification_hs.csv",
+        agg_df=agg_df,
         pre_cond_time=args.pre_cond_time,
         post_cond_time=args.post_cond_time,
         min_silence_time=args.min_silence_time,

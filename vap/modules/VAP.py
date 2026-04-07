@@ -22,7 +22,10 @@ class VAP(nn.Module):
         self,
         encoder: nn.Module,
         transformer: nn.Module,
-        relation_conditioner: Optional[nn.Module] = None,
+        relation_embedder: Optional[nn.Module] = None,
+        cat_rel_encoder: bool = False,
+        cat_rel_combinator: bool = False,
+        sum_rel_encoder: bool = False,
         bin_times: list[float] = [0.2, 0.4, 0.6, 0.8],
         frame_hz: int = 50,
     ):
@@ -32,12 +35,19 @@ class VAP(nn.Module):
         self.objective = VAPObjective(bin_times=bin_times, frame_hz=frame_hz)
         self.frame_hz = frame_hz
         self.dim: int = getattr(self.transformer, "dim", 256)
+        self.cat_rel_encoder = cat_rel_encoder
+        self.cat_rel_combinator = cat_rel_combinator
+        self.sum_rel_encoder = sum_rel_encoder
+        if cat_rel_encoder or cat_rel_combinator or sum_rel_encoder:
+            self.relation_embedder = relation_embedder
 
+        # Encoder #
+
+        # Adapt dimensions when concatenating rel_embs to audio encoder outputs
         self.feature_projection = nn.Identity()
-
-        if relation_conditioner is not None:
-            self.relation_conditioner = relation_conditioner
-            inp_dim = self.encoder.dim + self.relation_conditioner.dim
+        if cat_rel_encoder and relation_embedder is not None:
+            print("Using relation encoder - Concatenation method")
+            inp_dim = self.encoder.dim + self.relation_embedder.dim
             self.feature_projection = ProjectionLayer(
                 inp_dim, self.transformer.dim
             )
@@ -45,11 +55,26 @@ class VAP(nn.Module):
                 self.feature_projection = ProjectionLayer(
                     self.encoder.dim, self.transformer.dim
             )
+                
+        # Project rel_embs to transformer dim when summing them to audio encoder outputs
+        if sum_rel_encoder and relation_embedder is not None:
+            print("Using relation encoder - Summation method")
+            self.rel_emb_projection = ProjectionLayer(
+                self.relation_embedder.dim, self.transformer.dim
+            )
 
-        # Outputs
+        # Outputs #
         # Voice activity objective -> x1, x2 -> logits ->  BCE
-        self.va_classifier = nn.Linear(self.dim, 1)
-        self.vap_head = nn.Linear(self.dim, self.objective.n_classes)
+
+        # Adapt dimensions when concatenating rel_embs to transformer outputs 
+        if self.cat_rel_combinator and relation_embedder is not None:
+            print("Using relation combinator - Concatenation method")
+            head_dim = self.dim + self.relation_embedder.dim
+            self.va_classifier = nn.Linear(head_dim, 1)
+            self.vap_head = nn.Linear(head_dim, self.objective.n_classes)
+        else:
+            self.va_classifier = nn.Linear(self.dim, 1)
+            self.vap_head = nn.Linear(self.dim, self.objective.n_classes)
 
     @property
     def horizon_time(self) -> float:
@@ -77,8 +102,8 @@ class VAP(nn.Module):
         x2 = self.encoder(audio[:, 1:])  # speaker 2
         return x1, x2
     
-    def relation_conditioning(self, labels: Tensor) -> Tensor:
-        return self.relation_conditioner(labels.view(-1)).unsqueeze(1)
+    def embed_relation(self, labels: Tensor) -> Tensor:
+        return self.relation_embedder(labels.view(-1)).unsqueeze(1)
 
     def head(self, x: Tensor, x1: Tensor, x2: Tensor) -> tuple[Tensor, Tensor]:
         v1 = self.va_classifier(x1)
@@ -89,13 +114,40 @@ class VAP(nn.Module):
 
     def forward(self, waveform: Tensor, relation_labels: Optional[Tensor] = None, attention: bool = False) -> OUT:
         x1, x2 = self.encode_audio(waveform)
-        if relation_labels is not None and hasattr(self, "relation_conditioner"):
-            rel_emb = self.relation_conditioning(relation_labels)
+
+        #===================================#
+        #-----------REL_COND MODEL----------#
+        #===================================#
+        if relation_labels is not None and self.cat_rel_encoder == True:
+            rel_emb = self.embed_relation(relation_labels)
             rel_emb = rel_emb.expand(-1, x1.shape[1], -1) 
             x1 = torch.cat([x1, rel_emb], dim=-1)
             x2 = torch.cat([x2, rel_emb], dim=-1)
+        #===================================#
+
         x1 = self.feature_projection(x1)
         x2 = self.feature_projection(x2)
+
+        #===================================#
+        #---------REL_COND_SUM MODEL--------#
+        #===================================#
+        if relation_labels is not None and self.sum_rel_encoder == True:
+            rel_emb = self.embed_relation(relation_labels)
+            rel_emb = rel_emb.expand(-1, x1.shape[1], -1)
+            rel_emb = self.rel_emb_projection(rel_emb)
+            x1 = x1 + rel_emb
+            x2 = x2 + rel_emb
+        #===================================#
+
+        # --------------------------------- #
+        #           REL_COMB MODEL          #
+        # --------------------------------- #
+        if relation_labels is not None and self.cat_rel_combinator == True:
+            rel_emb = self.embed_relation(relation_labels)
+            rel_emb = rel_emb.expand(-1, x1.shape[1], -1)
+            out = self.transformer(x1, x2, attention=attention, rel_emb=rel_emb)
+        # --------------------------------- #
+
         out = self.transformer(x1, x2, attention=attention)
         logits, vad = self.head(out["x"], out["x1"], out["x2"])
         out["logits"] = logits
@@ -194,11 +246,12 @@ class VAP(nn.Module):
         self,
         waveform: Tensor,
         vad: Optional[Tensor] = None,
+        relation_labels: Optional[Tensor] = None,
         now_lims: list[int] = [0, 1],
         future_lims: list[int] = [2, 3],
     ) -> OUT:
         """"""
-        out = self(waveform)
+        out = self(waveform, relation_labels=relation_labels)
         probs = out["logits"].softmax(dim=-1)
         vap_vad = out["vad"].sigmoid()
         h = self.entropy(probs)
@@ -224,6 +277,7 @@ class VAP(nn.Module):
     def vad(
         self,
         waveform: Tensor,
+        relation_labels: Optional[Tensor] = None,
         max_fill_silence_time: float = 0.02,
         max_omit_spike_time: float = 0.02,
         vad_cutoff: float = 0.5,
@@ -231,7 +285,10 @@ class VAP(nn.Module):
         """
         Extract (binary) Voice Activity Detection from model
         """
-        vad = (self(waveform)["vad"].sigmoid() >= vad_cutoff).float()
+        vad = (
+            self(waveform, relation_labels=relation_labels)["vad"].sigmoid()
+            >= vad_cutoff
+        ).float()
         for b in range(vad.shape[0]):
             # TODO: which order is better?
             vad[b] = vad_fill_silences(
@@ -254,10 +311,10 @@ if __name__ == "__main__":
     encoder = EncoderCPC()
     # encoder = EncoderHubert()
     transformer = TransformerStereo(dim=512)
-    conditioner = LabelEmbeddingLookup()
+    embedder = LabelEmbeddingLookup()
 
-    model = VAP(encoder, transformer, conditioner)
-    print(model)
+    model = VAP(encoder, transformer, embedder, sum_rel_encoder=True)
+    #print(model)
 
     x = torch.randn(1, 2, 32000)
     lbl = torch.randint(0, 9, (1,1))

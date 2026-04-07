@@ -44,11 +44,9 @@ class VAPModule(L.LightningModule):
                 waveform: Tensor,
                 relation_labels: Optional[Tensor] = None
                ) -> dict[str, Tensor]:
-        if relation_labels is not None and hasattr(self.model, "relation_conditioner"):
-            print("RUNNING WITH RELATION CONDITIONER")
+        if relation_labels is not None and hasattr(self.model, "relation_embedder"):
             return self.model(waveform, relation_labels)
         else:
-            print("RELATION CONDITIONER NOT AVAILABLE")
             return self.model(waveform)
 
     @staticmethod
@@ -89,7 +87,7 @@ class VAPModule(L.LightningModule):
             out:        dict, ['logits', 'vad', 'vap_loss', 'vad_loss']
         """
         labels = self.model.extract_labels(batch["vad"])
-        if hasattr(self.model, "relation_conditioner"):
+        if hasattr(self.model, "relation_embedder"):
             out = self(batch["waveform"], batch["relation"])
         else:
             out = self(batch["waveform"])
