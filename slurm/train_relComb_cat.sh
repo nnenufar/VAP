@@ -4,10 +4,10 @@
 #SBATCH --error=./slurm/out/train.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task 8
-#SBATCH --time=2-00:00:00
-#SBATCH --mem=50G
+#SBATCH --time=4-00:00:00
+#SBATCH --mem=30G
 #SBATCH --gres=gpu:1
-#SBATCH --partition=h100
+#SBATCH --partition=l40s
 
 source ~/miniconda3/bin/activate
 conda activate vap
@@ -19,5 +19,6 @@ python vap/main.py \
   datamodule.train_path=data/splits/train_WindowDset.csv \
   datamodule.val_path=data/splits/val_WindowDset.csv \
   datamodule.test_path=data/splits/test_WindowDset.csv \
-  datamodule.batch_size=64 \
-  datamodule.num_workers=8
+  datamodule.batch_size=60 \
+  datamodule.num_workers=8 \
+  +pretrained_checkpoint_path="/home/joao.lima/experiments/VAP/runs/checkpoints/epoch\=6-step\=49252.ckpt"

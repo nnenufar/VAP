@@ -18,7 +18,7 @@ module:
     _target_: vap.modules.lightning_module.VAPModule
     model:
         _target_: vap.modules.VAP.VAP
-        cat_rel_encoder: true
+        model_variant: cat_rel_encoder
         bin_times: [0.2, 0.4, 0.6, 0.8]
         frame_hz: 50
         encoder:
@@ -34,9 +34,9 @@ module:
             dff_k: 3
             dropout: 0.1
         relation_embedder:
-        _target_: vap.modules.modules.LabelEmbeddingLookup
-        n_labels: 11
-        dim: 16
+            _target_: vap.modules.modules.LabelEmbeddingLookup
+            n_labels: 11
+            dim: 16
     optim_fn:
         _target_: torch.optim.AdamW
         _partial_: true

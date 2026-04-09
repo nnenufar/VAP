@@ -5,6 +5,7 @@ from os.path import dirname
 from typing import Tuple
 
 from vap.utils.audio import time_to_frames
+import ast
 
 VAD_LIST = list[list[list[float]]]
 
@@ -338,7 +339,7 @@ def read_txt(path, encoding="utf-8"):
     return data
 
 ################################################
-# Conditioning labels
+# Relation Conditioning
 ################################################
 
 import os
@@ -357,6 +358,10 @@ def encode_label(label,
     Returns:
         torch.Tensor: Scalar tensor containing the encoded label
     """
+
+    if label is None:
+        return None
+    
     global _LABEL_CACHE
     
     # Load cache if not present in memory
@@ -379,3 +384,54 @@ def encode_label(label,
 
     # Return encoded label as tensor
     return torch.tensor(label_to_id[label], dtype=torch.long)
+
+
+_PERSONALITY_STATS_CACHE = {}
+
+################################################
+# Personality Conditioning
+################################################
+
+def process_personalities(personalities_val, stats_path="data/personality_stats.json"):
+    """
+    Parses and standardizes personality data into a (2, 5) float tensor.
+    
+    Args:
+        personalities_val (str, list): Raw personality values (length 10).
+        stats_path (str): The path to the json file with mean/std calculations.
+        
+    Returns:
+        torch.Tensor: Shape (2, 5) tensor normalized based on statistics.
+    """
+    global _PERSONALITY_STATS_CACHE
+    
+    # Load cache if not present in memory
+    if stats_path is not None and stats_path not in _PERSONALITY_STATS_CACHE:
+        if os.path.exists(stats_path):
+            with open(stats_path, "r") as f:
+                _PERSONALITY_STATS_CACHE[stats_path] = json.load(f)
+        else:
+            _PERSONALITY_STATS_CACHE[stats_path] = None
+            
+    stats = _PERSONALITY_STATS_CACHE.get(stats_path)
+
+    if personalities_val is not None:
+        val = personalities_val
+        if isinstance(val, str):
+            val = ast.literal_eval(val)
+        pers_list = [float(x) for x in val]
+    else:
+        return None
+
+            
+    if stats is not None:
+        traits = ["extraversion", "agreeableness", "conscientiousness", "neuroticism", "openness"]
+        for i, trait_name in enumerate(traits):
+            if trait_name in stats:
+                mean = stats[trait_name]["mean"]
+                std = stats[trait_name]["std"]
+                if std > 0:
+                    pers_list[i] = (pers_list[i] - mean) / std
+                    pers_list[i + 5] = (pers_list[i + 5] - mean) / std
+                    
+    return torch.tensor([pers_list[:5], pers_list[5:]], dtype=torch.float)

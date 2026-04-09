@@ -15,9 +15,9 @@ conda activate vap
 export WANDB_MODE=offline
 
 python vap/main.py \
-  --config-name=relCond_sum_train_config \
-  datamodule.train_path=data/splits/train_WindowDset.csv \
-  datamodule.val_path=data/splits/val_WindowDset.csv \
-  datamodule.test_path=data/splits/test_WindowDset.csv \
+  --config-name=persoCond_cat_train_config \
+  datamodule.train_path=data/splits/train_WindowDset_fullPer.csv \
+  datamodule.val_path=data/splits/val_WindowDset_fullPer.csv \
+  datamodule.test_path=data/splits/test_WindowDset_fullPer.csv \
   datamodule.batch_size=60 \
   datamodule.num_workers=8

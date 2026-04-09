@@ -42,10 +42,14 @@ class VAPModule(L.LightningModule):
 
     def forward(self,
                 waveform: Tensor,
-                relation_labels: Optional[Tensor] = None
+                relation_labels: Optional[Tensor] = None,
+                personalities: Optional[Tensor] = None
                ) -> dict[str, Tensor]:
-        if relation_labels is not None and hasattr(self.model, "relation_embedder"):
-            return self.model(waveform, relation_labels)
+        model_variant = getattr(self.model, "model_variant", "baseline")
+        if "rel" in model_variant and relation_labels is not None:
+            return self.model(waveform, relation_labels=relation_labels)
+        elif "perso" in model_variant and personalities is not None:
+            return self.model(waveform, personalities=personalities)
         else:
             return self.model(waveform)
 
@@ -87,8 +91,11 @@ class VAPModule(L.LightningModule):
             out:        dict, ['logits', 'vad', 'vap_loss', 'vad_loss']
         """
         labels = self.model.extract_labels(batch["vad"])
-        if hasattr(self.model, "relation_embedder"):
-            out = self(batch["waveform"], batch["relation"])
+        model_variant = getattr(self.model, "model_variant", "baseline")
+        if "rel" in model_variant:
+            out = self(batch["waveform"], relation_labels=batch["relation"])
+        elif "perso" in model_variant:
+            out = self(batch["waveform"], personalities=batch["personalities"])
         else:
             out = self(batch["waveform"])
 

@@ -387,7 +387,7 @@ class GPTStereo(GPT):
         self.combinator = Combinator(dim=self.dim, activation="GELU")
 
     def forward(
-        self, x1: torch.Tensor, x2: torch.Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None
+        self, x1: torch.Tensor, x2: torch.Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None, cond_method: Optional[str] = None
     ) -> Dict[str, torch.Tensor]:
 
         self_attn_a = []
@@ -405,9 +405,15 @@ class GPTStereo(GPT):
 
         x = self.combinator(x1, x2)
         if rel_emb is not None:
-            x = torch.cat([x, rel_emb], dim=-1)
-            x1 = torch.cat([x1, rel_emb], dim=-1)
-            x2 = torch.cat([x2, rel_emb], dim=-1)
+            assert cond_method in ["cat", "sum"], "cond_method must be one of ['cat', 'sum']"
+            if cond_method == "cat":
+                x = torch.cat([x, rel_emb], dim=-1)
+                x1 = torch.cat([x1, rel_emb], dim=-1)
+                x2 = torch.cat([x2, rel_emb], dim=-1)
+            elif cond_method == "sum":
+                x = x + rel_emb
+                x1 = x1 + rel_emb
+                x2 = x2 + rel_emb
 
         ret = {"x": x, "x1": x1, "x2": x2}
 
@@ -500,13 +506,13 @@ class TransformerStereo(nn.Module):
         )
 
     def forward(
-        self, x1: Tensor, x2: Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None
+        self, x1: Tensor, x2: Tensor, attention: bool = False, rel_emb: Optional[Tensor] = None, cond_method: Optional[str] = None
     ) -> Mapping[str, Tensor]:
         o1 = self.ar_channel(x1, attention=attention)  # ["x"]
         o2 = self.ar_channel(x2, attention=attention)  # ["x"]
 
         if rel_emb is not None:
-            out = self.ar(o1["x"], o2["x"], attention=attention, rel_emb=rel_emb)
+            out = self.ar(o1["x"], o2["x"], attention=attention, rel_emb=rel_emb, cond_method=cond_method)
         else:
             out = self.ar(o1["x"], o2["x"], attention=attention)
 
@@ -551,6 +557,39 @@ class LabelEmbeddingLookup(nn.Module):
 
     def forward(self, label_ids: Tensor) -> Tensor:
         return self.embedding(label_ids)
+
+class PersonalityEmbedder(nn.Module):
+    """
+    Embeds numerical personality traits into a continuous embedding space.
+    """
+
+    def __init__(self, input_dim: int = 5, hidden_dim: int = 32, out_dim: int = 64):
+        super().__init__()
+        self.dim = out_dim
+
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, out_dim)
+        )
+
+    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+        """
+        Args:
+            x (Tensor): Tensor of shape (B, 2, input_dim). (B, 2, 5) for SI samples
+                        batch size, 2 speakers, 5 personality traits.
+                        
+        Returns:
+            Tuple[Tensor, Tensor]: Two embedding tensors of shape (B, out_dim),
+                                   one for each speaker.
+        """
+        x1 = x[..., 0, :]
+        x1 = self.net(x1)
+
+        x2 = x[..., 1, :]
+        x2 = self.net(x2)
+        return x1, x2
+
 
 def test_gpt():
     model = GPT(dim=256, dff_k=3, num_layers=4, num_heads=8)

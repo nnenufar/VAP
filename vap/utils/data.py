@@ -1,3 +1,6 @@
+import ast
+import json
+import numpy as np
 import pandas as pd
 
 
@@ -59,3 +62,47 @@ def get_session_info(session_lookup_df, session_id):
 		"participant_ids": row["participant_ids"],
 		"personalities": personalities,
 	}
+
+
+def calculate_personality_statistics(slidingDset_csv_path, output_json_path = "data/personality_stats.json"):
+	"""
+	Calculates the mean and standard deviation for the 5 personality traits from both participants.
+	Saves the result to a specified JSON file.
+	"""
+	df = pd.read_csv(slidingDset_csv_path)
+
+	def parse_personalities(val):
+		if isinstance(val, str):
+			val = ast.literal_eval(val)
+		return [float(x) for x in val]
+
+	personalities_parsed = df["personalities"].apply(parse_personalities)
+
+	traits = {
+		"extraversion": [],
+		"agreeableness": [],
+		"conscientiousness": [],
+		"neuroticism": [],
+		"openness": []
+	}
+
+	for row in personalities_parsed:
+		if len(row) == 10 and not np.isnan(row[0]):
+			traits["extraversion"].extend([row[0], row[5]])
+			traits["agreeableness"].extend([row[1], row[6]])
+			traits["conscientiousness"].extend([row[2], row[7]])
+			traits["neuroticism"].extend([row[3], row[8]])
+			traits["openness"].extend([row[4], row[9]])
+
+	stats = {}
+	for trait_name, values in traits.items():
+		stats[trait_name] = {
+			"mean": float(np.nanmean(values)),
+			"std": float(np.nanstd(values))
+		}
+
+	with open(output_json_path, 'w') as f:
+		json.dump(stats, f, indent=4)
+
+	return stats
+

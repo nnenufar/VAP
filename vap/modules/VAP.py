@@ -10,7 +10,7 @@ from vap.utils.utils import (
     vad_fill_silences,
     vad_omit_spikes,
 )
-from vap.modules.modules import ProjectionLayer, LabelEmbeddingLookup
+from vap.modules.modules import ProjectionLayer, LabelEmbeddingLookup, PersonalityEmbedder
 
 everything_deterministic()
 
@@ -23,9 +23,8 @@ class VAP(nn.Module):
         encoder: nn.Module,
         transformer: nn.Module,
         relation_embedder: Optional[nn.Module] = None,
-        cat_rel_encoder: bool = False,
-        cat_rel_combinator: bool = False,
-        sum_rel_encoder: bool = False,
+        personality_embedder: Optional[nn.Module] = None,
+        model_variant: str = "baseline",
         bin_times: list[float] = [0.2, 0.4, 0.6, 0.8],
         frame_hz: int = 50,
     ):
@@ -35,46 +34,56 @@ class VAP(nn.Module):
         self.objective = VAPObjective(bin_times=bin_times, frame_hz=frame_hz)
         self.frame_hz = frame_hz
         self.dim: int = getattr(self.transformer, "dim", 256)
-        self.cat_rel_encoder = cat_rel_encoder
-        self.cat_rel_combinator = cat_rel_combinator
-        self.sum_rel_encoder = sum_rel_encoder
-        if cat_rel_encoder or cat_rel_combinator or sum_rel_encoder:
-            self.relation_embedder = relation_embedder
+        self.personality_embedder = personality_embedder
+        self.relation_embedder = relation_embedder
+        self.model_variant = model_variant
+
+        valid_variants = {
+            "baseline",
+            "cat_rel_encoder",
+            "sum_rel_encoder",
+            "cat_rel_combinator",
+            "sum_rel_combinator",
+            "cat_perso_encoder"
+        }
+        if self.model_variant not in valid_variants:
+            valid_list = ", ".join(sorted(valid_variants))
+            raise ValueError(
+                f"Unknown model_variant '{self.model_variant}'. Valid: {valid_list}"
+            )
 
         # Encoder #
-
-        # Adapt dimensions when concatenating rel_embs to audio encoder outputs
-        self.feature_projection = nn.Identity()
-        if cat_rel_encoder and relation_embedder is not None:
-            print("Using relation encoder - Concatenation method")
+        # Adapt projection dimensions when concatenating rel_embs to audio encoder outputs
+        if self.model_variant == "cat_rel_encoder":
             inp_dim = self.encoder.dim + self.relation_embedder.dim
-            self.feature_projection = ProjectionLayer(
-                inp_dim, self.transformer.dim
-            )
+            self.feature_projection = ProjectionLayer(inp_dim, self.transformer.dim)
+        elif self.model_variant == "cat_perso_encoder":
+            inp_dim = self.encoder.dim + self.personality_embedder.dim
+            self.feature_projection = ProjectionLayer(inp_dim, self.transformer.dim)
         elif self.encoder.dim != self.transformer.dim:
-                self.feature_projection = ProjectionLayer(
-                    self.encoder.dim, self.transformer.dim
-            )
-                
-        # Project rel_embs to transformer dim when summing them to audio encoder outputs
-        if sum_rel_encoder and relation_embedder is not None:
-            print("Using relation encoder - Summation method")
-            self.rel_emb_projection = ProjectionLayer(
-                self.relation_embedder.dim, self.transformer.dim
-            )
+            self.feature_projection = ProjectionLayer(self.encoder.dim, self.transformer.dim)
+        else:
+            self.feature_projection = nn.Identity()
 
         # Outputs #
         # Voice activity objective -> x1, x2 -> logits ->  BCE
 
         # Adapt dimensions when concatenating rel_embs to transformer outputs 
-        if self.cat_rel_combinator and relation_embedder is not None:
-            print("Using relation combinator - Concatenation method")
+        if self.model_variant == "cat_rel_combinator":
             head_dim = self.dim + self.relation_embedder.dim
             self.va_classifier = nn.Linear(head_dim, 1)
             self.vap_head = nn.Linear(head_dim, self.objective.n_classes)
         else:
             self.va_classifier = nn.Linear(self.dim, 1)
             self.vap_head = nn.Linear(self.dim, self.objective.n_classes)
+
+        print(f"Running model version: {self.model_variant}")
+
+        # rel_emb projection to transformer dim when summing
+        if self.model_variant in {"sum_rel_encoder", "sum_rel_combinator"}:
+            self.rel_emb_projection = ProjectionLayer(
+                self.relation_embedder.dim, self.transformer.dim
+            )
 
     @property
     def horizon_time(self) -> float:
@@ -104,6 +113,9 @@ class VAP(nn.Module):
     
     def embed_relation(self, labels: Tensor) -> Tensor:
         return self.relation_embedder(labels.view(-1)).unsqueeze(1)
+    
+    def embed_personalities(self, values: Tensor) -> Tensor:
+        return self.personality_embedder(values)
 
     def head(self, x: Tensor, x1: Tensor, x2: Tensor) -> tuple[Tensor, Tensor]:
         v1 = self.va_classifier(x1)
@@ -112,43 +124,70 @@ class VAP(nn.Module):
         logits = self.vap_head(x)
         return logits, vad
 
-    def forward(self, waveform: Tensor, relation_labels: Optional[Tensor] = None, attention: bool = False) -> OUT:
+    def forward(
+        self,
+        waveform: Tensor,
+        relation_labels: Optional[Tensor] = None,
+        personalities: Optional[Tensor] = None,
+        attention: bool = False,
+    ) -> OUT:
+        
         x1, x2 = self.encode_audio(waveform)
 
-        #===================================#
-        #-----------REL_COND MODEL----------#
-        #===================================#
-        if relation_labels is not None and self.cat_rel_encoder == True:
+        if relation_labels is not None:
             rel_emb = self.embed_relation(relation_labels)
-            rel_emb = rel_emb.expand(-1, x1.shape[1], -1) 
+            rel_emb = rel_emb.expand(-1, x1.shape[1], -1)
+
+        if personalities is not None:
+            perso_emb_x1, perso_emb_x2 = self.embed_personalities(personalities)
+            perso_emb_x1 = perso_emb_x1.unsqueeze(1).expand(-1, x1.shape[1], -1)
+            perso_emb_x2 = perso_emb_x2.unsqueeze(1).expand(-1, x2.shape[1], -1)
+
+        #===================================#
+        #         REL_COND_CAT MODEL        #
+        #===================================#
+        if self.model_variant == "cat_rel_encoder":
             x1 = torch.cat([x1, rel_emb], dim=-1)
             x2 = torch.cat([x2, rel_emb], dim=-1)
+        #===================================#
+
+        #===================================#
+        #        PERSO_COND_CAT MODEL       #
+        #===================================#
+        if self.model_variant == "cat_perso_encoder":
+            x1 = torch.cat([x1, perso_emb_x1], dim=-1)
+            x2 = torch.cat([x2, perso_emb_x2], dim=-1)
         #===================================#
 
         x1 = self.feature_projection(x1)
         x2 = self.feature_projection(x2)
 
         #===================================#
-        #---------REL_COND_SUM MODEL--------#
+        #         REL_COND_SUM MODEL        #
         #===================================#
-        if relation_labels is not None and self.sum_rel_encoder == True:
-            rel_emb = self.embed_relation(relation_labels)
-            rel_emb = rel_emb.expand(-1, x1.shape[1], -1)
+        if self.model_variant == "sum_rel_encoder":
             rel_emb = self.rel_emb_projection(rel_emb)
             x1 = x1 + rel_emb
             x2 = x2 + rel_emb
         #===================================#
 
-        # --------------------------------- #
-        #           REL_COMB MODEL          #
-        # --------------------------------- #
-        if relation_labels is not None and self.cat_rel_combinator == True:
-            rel_emb = self.embed_relation(relation_labels)
-            rel_emb = rel_emb.expand(-1, x1.shape[1], -1)
-            out = self.transformer(x1, x2, attention=attention, rel_emb=rel_emb)
-        # --------------------------------- #
-
-        out = self.transformer(x1, x2, attention=attention)
+        #===================================#
+        #         REL_COMB_CAT MODEL        #
+        #===================================#
+        if self.model_variant == "cat_rel_combinator":
+            out = self.transformer(x1, x2, attention=attention, rel_emb=rel_emb, cond_method="cat")
+        #===================================#
+        
+        #===================================#
+        #         REL_COMB_SUM MODEL        #
+        #===================================#
+        elif self.model_variant == "sum_rel_combinator":
+            rel_emb = self.rel_emb_projection(rel_emb)
+            out = self.transformer(x1, x2, attention=attention, rel_emb=rel_emb, cond_method="sum")
+        #===================================#
+        
+        else:
+            out = self.transformer(x1, x2, attention=attention)
         logits, vad = self.head(out["x"], out["x1"], out["x2"])
         out["logits"] = logits
         out["vad"] = vad
@@ -311,11 +350,13 @@ if __name__ == "__main__":
     encoder = EncoderCPC()
     # encoder = EncoderHubert()
     transformer = TransformerStereo(dim=512)
-    embedder = LabelEmbeddingLookup()
+    rel_embedder = LabelEmbeddingLookup()
+    perso_embedder = PersonalityEmbedder()
 
-    model = VAP(encoder, transformer, embedder, sum_rel_encoder=True)
+    model = VAP(encoder, transformer, model_variant="cat_perso_encoder", personality_embedder=perso_embedder)
     #print(model)
 
     x = torch.randn(1, 2, 32000)
     lbl = torch.randint(0, 9, (1,1))
-    out = model(waveform=x, relation_labels=lbl)
+    perso = torch.randn(1, 2, 5)
+    out = model(waveform=x, personalities=perso)

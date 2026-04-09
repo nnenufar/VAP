@@ -1,3 +1,4 @@
+import ast
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
@@ -11,7 +12,7 @@ import matplotlib.pyplot as plt
 
 
 from vap.utils.audio import load_waveform, mono_to_stereo
-from vap.utils.utils import vad_list_to_onehot, encode_label
+from vap.utils.utils import vad_list_to_onehot, encode_label, process_personalities
 from vap.utils.plot import plot_melspectrogram, plot_vad
 
 
@@ -85,6 +86,7 @@ class VAPDataset(Dataset):
         frame_hz: int = 50,
         mono: bool = False,
         mapping_path: str = "data/label_mapping.json",
+        personality_stats_path: str = "data/personality_stats.json",
     ) -> None:
         self.path = path
         self.df = load_df(path)
@@ -99,6 +101,7 @@ class VAPDataset(Dataset):
 
         # Mapping file path for labels
         self.mapping_path = mapping_path
+        self.personality_stats_path = personality_stats_path
 
     def __len__(self) -> int:
         return len(self.df)
@@ -136,21 +139,25 @@ class VAPDataset(Dataset):
             d["vad_list"], duration=dur + self.horizon, frame_hz=self.frame_hz
         )
 
-        # Conditioning labels
-        rel = encode_label(d["relation"], self.mapping_path)
+        # Relationship labels
+        rel = encode_label(d.get("relation", None), self.mapping_path)
         
-        # Add personalities
-        # Default to zeros if it fails to ensure backwards compatibility with generic Dset
-        #personalities = d.get("personalities", torch.zeros(10))
+        # Personalities
+        personalities = process_personalities(d.get("personalities", None), self.personality_stats_path)
 
-        return {
+        out = {
             "session": d.get("session", ""),
-            "relation": rel,
-            # "personalities": personalities,
             "waveform": w,
             "vad": vad,
             "dataset": d.get("dataset", ""),
         }
+        
+        if rel is not None:
+            out["relation"] = rel
+        if personalities is not None:
+            out["personalities"] = personalities
+            
+        return out
 
 
 class VAPDataModule(L.LightningDataModule):
@@ -167,6 +174,7 @@ class VAPDataModule(L.LightningDataModule):
         num_workers: int = 0,
         pin_memory: bool = True,
         prefetch_factor: int = 2,
+        personality_stats_path: str = "data/personality_stats.json",
         **kwargs,
     ):
         super().__init__()
@@ -175,6 +183,7 @@ class VAPDataModule(L.LightningDataModule):
         self.train_path = train_path
         self.val_path = val_path
         self.test_path = test_path
+        self.personality_stats_path = personality_stats_path
 
         # values
         self.mono = mono
@@ -230,6 +239,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                personality_stats_path=self.personality_stats_path,
             )
             self.val_dset = VAPDataset(
                 self.val_path,
@@ -237,6 +247,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                personality_stats_path=self.personality_stats_path,
             )
 
         if stage in (None, "test"):
@@ -248,6 +259,7 @@ class VAPDataModule(L.LightningDataModule):
                 sample_rate=self.sample_rate,
                 frame_hz=self.frame_hz,
                 mono=self.mono,
+                personality_stats_path=self.personality_stats_path,
             )
 
     def collate_fn(self, batch: list[dict[str, Any]]):
@@ -255,14 +267,22 @@ class VAPDataModule(L.LightningDataModule):
 
         for b in batch:
             batch_stacked["session"].append(b["session"])
-            batch_stacked["relation"].append(b["relation"])
             batch_stacked["dataset"].append(b["dataset"])
             batch_stacked["waveform"].append(b["waveform"])
             batch_stacked["vad"].append(b["vad"])
+            if "relation" in b:
+                batch_stacked["relation"].append(b["relation"])
+            if "personalities" in b:
+                batch_stacked["personalities"].append(b["personalities"])
 
         batch_stacked["waveform"] = torch.stack(batch_stacked["waveform"])
-        batch_stacked["relation"] = torch.stack(batch_stacked["relation"])
         batch_stacked["vad"] = torch.stack(batch_stacked["vad"])
+        
+        if "relation" in batch_stacked and len(batch_stacked["relation"]) > 0:
+            batch_stacked["relation"] = torch.stack(batch_stacked["relation"])
+        if "personalities" in batch_stacked and len(batch_stacked["personalities"]) > 0:
+            batch_stacked["personalities"] = torch.stack(batch_stacked["personalities"])
+
         return batch_stacked
 
     def train_dataloader(self):

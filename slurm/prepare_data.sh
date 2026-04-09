@@ -27,22 +27,22 @@ else
         --vad_dir $SI_DIR/vad \
         --output $PATHS_FULL_DIR
     echo Successfully created full paths table
-fi
 
-# Create split-specific table from the full one
-python vap/data/create_splits.py \
-    --csv $PATHS_FULL_DIR \
-    --output_dir $PATHS_SPLITS_DIR \
-    --train_size 0.8 \
-    --val_size 0.15 \
-    --test_size 0.05
-echo Successfully created split paths table
+    # Create split-specific table from the full one
+    python vap/data/create_splits.py \
+        --csv $PATHS_FULL_DIR \
+        --output_dir $PATHS_SPLITS_DIR \
+        --train_size 0.8 \
+        --val_size 0.15 \
+        --test_size 0.05
+    echo Successfully created split paths table
+fi
 
 # Create sliding window tables for each split. These will be the input to train.bash
 python vap/data/create_sliding_window_dset.py \
     --audio_vad_csv $PATHS_SPLITS_DIR/train.csv \
     --agg_csv $AGGREGATED_CSV \
-    --output $PATHS_SPLITS_DIR/train_WindowDset.csv \
+    --output $PATHS_SPLITS_DIR/train_WindowDset_fullPer.csv \
     --duration 20 \
     --overlap 5 \
     --horizon 2
@@ -50,7 +50,7 @@ python vap/data/create_sliding_window_dset.py \
 python vap/data/create_sliding_window_dset.py \
     --audio_vad_csv $PATHS_SPLITS_DIR/test.csv \
     --agg_csv $AGGREGATED_CSV \
-    --output $PATHS_SPLITS_DIR/test_WindowDset.csv \
+    --output $PATHS_SPLITS_DIR/test_WindowDset_fullPer.csv \
     --duration 20 \
     --overlap 5 \
     --horizon 2
@@ -58,7 +58,7 @@ python vap/data/create_sliding_window_dset.py \
 python vap/data/create_sliding_window_dset.py \
     --audio_vad_csv $PATHS_SPLITS_DIR/val.csv \
     --agg_csv $AGGREGATED_CSV \
-    --output $PATHS_SPLITS_DIR/val_WindowDset.csv \
+    --output $PATHS_SPLITS_DIR/val_WindowDset_fullPer.csv \
     --duration 20 \
     --overlap 5 \
     --horizon 2
@@ -66,7 +66,7 @@ echo Successfully created sliding window dataset tables for each split
 
 # Sanity check
 python vap/data/datamodule.py \
-    --csv $PATHS_SPLITS_DIR/test_WindowDset.csv \
+    --csv $PATHS_SPLITS_DIR/test_WindowDset_fullPer.csv \
     --batch_size 4 \
     --num_workers 2 \
     --prefetch_factor 2

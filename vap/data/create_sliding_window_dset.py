@@ -136,6 +136,9 @@ def main(args):
         out_df["relation"] = out_df["relation"].replace(
             {"dating/spouse/romantic_partner": "romantic"}
         )
+
+        # Filter out empty personalities
+        out_df = out_df[~out_df["personalities"].apply(lambda x: "Undisclosed" in x)]
     
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(args.output, index=False)

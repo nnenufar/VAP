@@ -22,7 +22,7 @@ def main(cfg: DictConfig) -> None:
     datamodule = instantiate(cfg.datamodule)
 
     if getattr(cfg, "pretrained_checkpoint_path", None):
-        module = module.load_from_checkpoint(
+        module = module.__class__.load_from_checkpoint(
             checkpoint_path=cfg.pretrained_checkpoint_path
         )
         print("Loaded from checkpoint: ", cfg.pretrained_checkpoint_path)
@@ -36,6 +36,9 @@ def main(cfg: DictConfig) -> None:
         trainer = Trainer(fast_dev_run=True)
     else:
         trainer = instantiate(cfg.trainer)
+
+    # Explicitly switch all submodules to training mode before fit.
+    module.train()
 
     print("CPUs: ", os.cpu_count())
     print("Pytorch Threads: ", torch.get_num_threads())

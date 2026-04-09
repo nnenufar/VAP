@@ -18,6 +18,7 @@ module:
   _target_: vap.modules.lightning_module.VAPModule
   model:
     _target_: vap.modules.VAP.VAP
+    model_variant: baseline
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
     encoder:

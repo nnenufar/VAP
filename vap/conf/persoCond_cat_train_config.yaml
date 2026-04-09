@@ -18,7 +18,7 @@ module:
   _target_: vap.modules.lightning_module.VAPModule
   model:
     _target_: vap.modules.VAP.VAP
-    model_variant: cat_rel_encoder
+    model_variant: cat_perso_encoder #change
     bin_times: [0.2, 0.4, 0.6, 0.8]
     frame_hz: 50
     encoder:
@@ -33,10 +33,11 @@ module:
       num_heads: 4
       dff_k: 3
       dropout: 0.1
-    relation_embedder:
-      _target_: vap.modules.modules.LabelEmbeddingLookup
-      n_labels: 11
-      dim: 16
+    personality_embedder: #change
+      _target_: vap.modules.modules.PersonalityEmbedder
+      input_dim: 5
+      out_dim: 64
+
   optim_fn:
     _target_: torch.optim.AdamW
     _partial_: true
@@ -89,11 +90,11 @@ trainer:
     _target_: lightning.pytorch.loggers.wandb.WandbLogger
     save_dir: runs
     project: VAP2
-    name: VAP2_relCond_cat
+    name: VAP2_persoCond_cat #change
     log_model: true
   callbacks:
   - _target_: lightning.pytorch.callbacks.ModelCheckpoint
-    dirpath: runs/checkpoints/relCond_cat
+    dirpath: runs/checkpoints/persoCond_cat #change
     monitor: val_loss
     mode: min
     save_top_k: 1
